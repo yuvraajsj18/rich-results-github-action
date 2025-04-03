@@ -1,0 +1,31 @@
+# action.yml
+name: "Run Rich Results Test"
+description: "Runs a URL through the Google Rich Results Test using Puppeteer and reports findings."
+author: "Your Name/Org" # Change as needed
+
+inputs:
+  url:
+    description: "The URL to test."
+    required: true
+  output-directory:
+    description: "Directory to save outputs (screenshot, logs) relative to workspace root."
+    required: false
+    default: "rich-results-output" # Use a dedicated directory
+
+outputs:
+  check-result: # e.g., 'PASS' or 'FAIL'
+    description: "The result of the check (PASS/FAIL)."
+  screenshot-path:
+    description: "Relative path to the saved screenshot file."
+  logs-path:
+    description: "Relative path to the saved console logs file."
+  html-path:
+    description: "Relative path to the saved page HTML file."
+
+runs:
+  using: "node20" # Make sure this matches your Node version needs for Puppeteer
+  main: "index.js"
+
+branding:
+  icon: "search"
+  color: "green"
