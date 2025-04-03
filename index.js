@@ -33,7 +33,13 @@ core.info(`[INFO] Output directory: ${outputDir}`);
       waitUntil: "networkidle0",
       timeout: 60000, // Increased timeout slightly for CI potentially slower network
     });
-    core.info("[INFO] Page loaded successfully");
+    core.info("[INFO] Page loaded successfully.");
+
+    // --- Add the refresh step ---
+    core.info("[INFO] Refreshing the page once...");
+    await page.reload({ waitUntil: "networkidle0", timeout: 60000 }); // Wait for network idle after reload
+    core.info("[INFO] Page refreshed successfully.");
+    // --- End of refresh step ---
 
     // Input the URL using the correct selector
     core.info("[INFO] Attempting to input URL...");
