@@ -236,7 +236,7 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
     const consoleErrorsSelector =
       'div[role="button"] ::-p-text("JavaScript console messages")';
     const screenshotImgSelector = 'img[alt="Screenshot"]';
-    const consoleLogSelector = "div.iv2Qhc.io655b pre";
+    const consoleLogSelector = "div.myH6rc";
 
     // Helper function for clicking with error handling
     async function safeClick(
@@ -340,6 +340,16 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
         ) {
           console.log("[INFO] Saving console logs...");
           try {
+            // Wait for the console log container to appear after clicking the button
+            console.log(
+              `[DEBUG] Waiting for console log container: ${consoleLogSelector}`
+            );
+            await page.waitForSelector(consoleLogSelector, {
+              visible: true,
+              timeout: 15000,
+            });
+            console.log("[DEBUG] Console log container found.");
+
             errorLogResult = await page.evaluate((selector) => {
               const errorContainer = document.querySelector(selector);
               return errorContainer
@@ -350,9 +360,9 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
             console.log("[INFO] Console logs obtained successfully");
           } catch (e) {
             console.error(
-              `[ERROR] Failed to extract console logs via evaluate: ${e.message}`
+              `[ERROR] Failed to extract console logs (wait or evaluate failed): ${e.message}`
             );
-            errorLogResult = "Failed to extract console logs (evaluate error).";
+            errorLogResult = `Failed to extract console logs: ${e.message}`; // More specific error
           }
         } else {
           errorLogResult = "Skipped (Console Messages button click failed)";
