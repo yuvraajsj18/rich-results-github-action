@@ -44,9 +44,56 @@ core.info(`[INFO] Constructed direct test URL: ${directTestUrl}`);
       waitUntil: "networkidle0",
       timeout: 60000, // Keep generous timeout for initial load
     });
+    core.info("[INFO] Direct test page loaded.");
+
+    // --- Attempt to detect and dismiss intermittent modal --- New Block ---
     core.info(
-      "[INFO] Direct test page loaded. Waiting for analysis to start/complete..."
+      "[INFO] Checking for 'Something went wrong' modal and attempting to dismiss (7s timeout)..."
     );
+    const modalTextSelector = "span.uW2Fw-k2Wrsb-fmcmS"; // Specific modal text span from user
+    const dismissButtonSelector = 'button ::-p-text("Dismiss")'; // Text selector for button
+    const dismissButtonSelectorAlt = 'span[jsname="V67aGc"]'; // Specific span for button from user
+
+    try {
+      // Wait briefly for the *modal text itself* to appear
+      await page.waitForSelector(modalTextSelector, {
+        visible: true,
+        timeout: 7000,
+      });
+      core.warning(
+        "[WARN] 'Something went wrong' modal detected via text. Attempting to dismiss..."
+      );
+
+      // Now try to click the dismiss button (prioritize the specific span selector)
+      try {
+        await page.click(dismissButtonSelectorAlt); // Try span selector first
+        core.info(
+          "[INFO] Clicked 'Dismiss' button (using span[jsname='V67aGc'] selector)."
+        );
+      } catch (errAlt) {
+        core.warning(
+          `[WARN] Failed to click Dismiss button via span selector: ${errAlt.message}. Trying text selector...`
+        );
+        try {
+          await page.click(dismissButtonSelector); // Fallback to text selector
+          core.info("[INFO] Clicked 'Dismiss' button (using text selector).");
+        } catch (errText) {
+          // Log error if both clicks fail, but continue anyway, maybe it disappears
+          core.error(
+            `[ERROR] Failed to click Dismiss button using both selectors: ${errText.message}`
+          );
+        }
+      }
+      // Add a short pause after dismissal attempt to allow UI to settle
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      core.info("[INFO] Proceeding after modal dismissal attempt.");
+    } catch (error) {
+      // This block executes if the modal text doesn't appear within the 7-second timeout
+      core.info(
+        "[INFO] 'Something went wrong' modal not detected within timeout (this is normal)."
+      );
+    }
+    // --- End of modal handling block ---
 
     // Wait for the FINAL test results page state (shows View Tested Page or an error)
     // This wait is still needed as the test runs automatically upon loading the direct URL
