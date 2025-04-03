@@ -1,5 +1,18 @@
-# Dependencies
+# Node dependencies
 node_modules/
+
+# Action output
+rich-results-output/
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Optional Editor directories
+.vscode/
+.idea/
 
 # Output files
 output/ 

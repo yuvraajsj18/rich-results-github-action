@@ -1,74 +1,101 @@
+const core = require("@actions/core"); // Import @actions/core
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
 
-const urlToTest = process.argv[2];
+// Get inputs using @actions/core
+const urlToTest = core.getInput("url", { required: true });
+const outputDirName = core.getInput("output-directory"); // Relative path from workspace root
 
-if (!urlToTest) {
-  console.error("Please provide a URL to test as a command-line argument.");
-  process.exit(1);
-}
+// Resolve the output directory path relative to the workspace
+const outputDir = path.resolve(outputDirName);
 
-console.log(`[INFO] Starting test for URL: ${urlToTest}`);
+core.info(`[INFO] Starting test for URL: ${urlToTest}`);
+core.info(`[INFO] Output directory: ${outputDir}`);
 
 (async () => {
+  let browser = null; // Define browser outside try block for finally
   try {
-    console.log("[INFO] Launching browser...");
-    const browser = await puppeteer.launch({
-      headless: false,
+    core.info("[INFO] Launching browser...");
+    // Launch headless with args for CI environment
+    browser = await puppeteer.launch({
+      headless: "new", // Use modern headless mode
+      args: ["--no-sandbox", "--disable-setuid-sandbox"], // Necessary for Actions runner
       defaultViewport: { width: 1366, height: 768 },
     });
     const page = await browser.newPage();
-    console.log("[INFO] Browser launched successfully");
+    core.info("[INFO] Browser launched successfully");
 
     // Navigate to the Rich Results Test page
-    console.log("[INFO] Navigating to Rich Results Test page...");
+    core.info("[INFO] Navigating to Rich Results Test page...");
     await page.goto("https://search.google.com/test/rich-results", {
       waitUntil: "networkidle0",
-      timeout: 30000,
+      timeout: 60000, // Increased timeout slightly for CI potentially slower network
     });
-    console.log("[INFO] Page loaded successfully");
+    core.info("[INFO] Page loaded successfully");
 
     // Input the URL using the correct selector
-    console.log("[INFO] Attempting to input URL...");
+    core.info("[INFO] Attempting to input URL...");
+    // Wait for the input field to be ready before typing
+    await page.waitForSelector('input[aria-label="Enter a URL to test"]', {
+      visible: true,
+      timeout: 10000,
+    });
     await page.type('input[aria-label="Enter a URL to test"]', urlToTest);
-    console.log("[INFO] URL input successful");
+    core.info("[INFO] URL input successful");
 
-    console.log("[INFO] Starting test process...");
+    core.info("[INFO] Starting test process...");
 
     // Click the test button using the specific selector identified
-    console.log("[INFO] Looking for specific 'Test URL' button container...");
+    core.info("[INFO] Looking for specific 'Test URL' button container...");
     const testButtonSelector = "span.RveJvd.snByac"; // Target the parent span
 
     try {
+      // Wait for the button to be clickable
+      await page.waitForSelector(testButtonSelector, {
+        visible: true,
+        timeout: 10000,
+      });
       // Add a small delay before clicking
       await new Promise((resolve) => setTimeout(resolve, 500));
-      console.log(
-        `[DEBUG] Attempting to click selector: ${testButtonSelector}`
-      );
+      core.info(`[DEBUG] Attempting to click selector: ${testButtonSelector}`);
       await page.click(testButtonSelector);
-      console.log(
+      core.info(
         "[INFO] Test button clicked via specific selector, waiting for response..."
       );
     } catch (clickError) {
-      console.error(
-        `[ERROR] Could not click button with selector: ${testButtonSelector}`,
-        clickError
+      core.error(
+        `[ERROR] Could not click button with selector: ${testButtonSelector} - ${clickError}`
       );
-      console.error(
+      core.error(
         "[ERROR] The identified specific selector failed. Please double-check the element on the page."
       );
-      // Take screenshot before throwing
-      await page.screenshot({
-        path: path.join(__dirname, "click-failure-state.png"),
-      });
-      throw new Error(
+      // Try to take screenshot before failing
+      try {
+        // Ensure output dir exists for failure screenshot
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        const failureScreenshotPath = path.join(
+          outputDir,
+          "click-failure-state.png"
+        );
+        await page.screenshot({ path: failureScreenshotPath });
+        core.warning(
+          `Failure state screenshot saved to ${failureScreenshotPath}`
+        );
+      } catch (ssError) {
+        core.error(`Failed to save failure state screenshot: ${ssError}`);
+      }
+      // Set failure and exit function
+      core.setFailed(
         `Failed to click the specific Test URL button element (${testButtonSelector}).`
       );
+      return; // Exit the async function
     }
 
     // Wait for the test to start - look for loading indicators or changes in the page
-    console.log("[INFO] Waiting for test to start...");
+    core.info("[INFO] Waiting for test to start...");
     await page
       .waitForFunction(
         () => {
@@ -86,19 +113,25 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
             pageText.includes("Analyzing")
           );
         },
-        { timeout: 10000, polling: 500 }
+        { timeout: 15000, polling: 500 } // Increased slightly
       )
       .catch(() => {
-        console.log(
-          "[WARN] No clear loading indicator found, continuing anyway..."
+        core.warning(
+          "[WARN] No clear loading indicator found after click, continuing anyway..."
         );
       });
 
     // Wait for the test results page to load (shows View Tested Page or an error)
-    console.log(
+    core.info(
       "[INFO] Waiting for test results page to load (this may take a minute or two)..."
     );
-    let loadError = null;
+    // Define file paths relative to the specified output directory
+    const timeoutScreenshotPathAbs = path.join(outputDir, "timeout-state.png");
+    const timeoutScreenshotPathRel = path.join(
+      outputDirName,
+      "timeout-state.png"
+    ); // Relative path for output
+
     try {
       await page.waitForFunction(
         () => {
@@ -116,30 +149,45 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
         },
         { timeout: 180000, polling: 2000 } // 3 minutes timeout
       );
-      console.log("[INFO] Test results page loaded (or error displayed).");
+      core.info("[INFO] Test results page loaded (or error displayed).");
     } catch (timeoutError) {
-      loadError = timeoutError; // Store error to handle after potential screenshot
-      console.error(
+      core.error(
         "[FATAL ERROR] Timeout: Test did not complete loading results within 3 minutes."
       );
       try {
-        await page.screenshot({
-          path: path.join(__dirname, "timeout-state.png"),
-        });
+        // Ensure output dir exists for timeout screenshot
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        await page.screenshot({ path: timeoutScreenshotPathAbs });
+        core.warning(
+          `Timeout state screenshot saved to ${timeoutScreenshotPathAbs}`
+        );
+        core.setOutput("screenshot-path", timeoutScreenshotPathRel); // Set output even on timeout
       } catch (e) {
-        console.error("Failed to save timeout screenshot", e);
+        core.error(`[ERROR] Failed to save timeout screenshot: ${e}`);
       }
-      // Exit immediately on timeout
-      if (
-        typeof browser !== "undefined" &&
-        browser &&
-        typeof browser.close === "function"
-      ) {
-        try {
-          await browser.close();
-        } catch (e) {}
+      // Set failure and exit function
+      core.setFailed(
+        "Timeout: Test did not complete loading results within 3 minutes."
+      );
+      return; // Exit the async function
+    }
+
+    // --- Create output directory ---
+    core.info("[INFO] Ensuring output directory exists...");
+    if (!fs.existsSync(outputDir)) {
+      try {
+        fs.mkdirSync(outputDir, { recursive: true }); // Use recursive true
+        core.info(`[INFO] Created output directory: ${outputDir}`);
+      } catch (e) {
+        core.error(`[ERROR] Failed to create output directory: ${e.message}`);
+        // Set failure and exit function
+        core.setFailed(`Failed to create output directory: ${e.message}`);
+        return; // Exit the async function
       }
-      process.exit(1);
+    } else {
+      core.info(`[INFO] Output directory already exists: ${outputDir}`);
     }
 
     // --- Perform the Check based on Page Content ---
@@ -148,87 +196,70 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
     const targetErrorMessage =
       "Application error: a client-side exception has occurred (see the browser console for more information).";
 
+    // Define output file paths (absolute for writing, relative for setting outputs)
+    const resultFilePathAbs = path.join(outputDir, "final_result.txt");
+    const contentFilePathAbs = path.join(outputDir, "page_content.html");
+    const contentFilePathRel = path.join(outputDirName, "page_content.html");
+
     try {
-      console.log("[INFO] Getting page content for check...");
+      core.info("[INFO] Getting page content for check...");
       pageContent = await page.content();
 
-      console.log(
+      core.info(
         "[INFO] Checking content for specific Application Error string..."
       );
       if (pageContent.includes(targetErrorMessage)) {
         finalCheckResult = "FAIL";
-        console.log(
+        core.warning(
+          // Use warning for FAIL result
           "[WARN] Check Result: FAIL (Found Application Error string in page content)"
         );
       } else {
-        console.log(
+        core.info(
           "[INFO] Check Result: PASS (Application Error string not found in page content)"
         );
       }
     } catch (contentError) {
-      console.error(
+      core.error(
         `[ERROR] Failed to get page content after page load: ${contentError.message}`
       );
       // If we can't get content, we can't confirm the error string is absent.
       // Stick with PASS default as per requirement, but log this clearly.
-      console.log(
+      core.warning(
         "[WARN] Check Result: PASS (Could not get page content to verify, defaulting to PASS)"
       );
       pageContent = `Error getting content: ${contentError.message}`; // Save error for context
     }
 
     // --- Save Results ---
-    console.log(`[FINAL RESULT] Application Error Check: ${finalCheckResult}`);
+    core.info(`[FINAL RESULT] Application Error Check: ${finalCheckResult}`);
+    // Set the check-result output
+    core.setOutput("check-result", finalCheckResult);
 
-    // Setup output directory
-    console.log("[INFO] Setting up output directory...");
-    const outputDir = path.join(__dirname, "output");
-    if (!fs.existsSync(outputDir)) {
-      try {
-        fs.mkdirSync(outputDir);
-        console.log(`[INFO] Created output directory: ${outputDir}`);
-      } catch (e) {
-        console.error(
-          `[ERROR] Failed to create output directory: ${e.message}`
-        );
-        if (
-          typeof browser !== "undefined" &&
-          browser &&
-          typeof browser.close === "function"
-        ) {
-          try {
-            await browser.close();
-          } catch (e) {}
-        }
-        process.exit(1);
-      }
-    }
-
-    // Save the final result
+    // Save the final result text file
     try {
-      fs.writeFileSync(
-        path.join(outputDir, "final_result.txt"),
-        finalCheckResult
-      );
+      fs.writeFileSync(resultFilePathAbs, finalCheckResult);
+      core.info(`Final result saved to ${resultFilePathAbs}`);
     } catch (e) {
-      console.error(`[ERROR] Failed to write final result file: ${e.message}`);
+      core.error(`[ERROR] Failed to write final result file: ${e.message}`);
+      // Continue, but maybe warn or set a specific output? For now, just log.
     }
     // Save the page content for context/debugging
     try {
-      const contentPath = path.join(outputDir, "page_content.html");
-      fs.writeFileSync(contentPath, pageContent);
-      console.log(`[INFO] Page content saved to ${contentPath}`);
+      fs.writeFileSync(contentFilePathAbs, pageContent);
+      core.info(`[INFO] Page content saved to ${contentFilePathAbs}`);
+      // Set the html-path output
+      core.setOutput("html-path", contentFilePathRel);
     } catch (e) {
-      console.error(`[ERROR] Failed to write page content file: ${e.message}`);
+      core.error(`[ERROR] Failed to write page content file: ${e.message}`);
     }
 
     // --- Attempt to gather supporting evidence (Screenshot, Logs) ---
-    // Run this regardless of PASS/FAIL, as long as the page load didn't timeout.
-    console.log(
+    core.info(
       "[INFO] Attempting to gather screenshot and console logs (best effort)..."
     );
 
-    // Define selectors
+    // Define selectors (keep existing ones)
     const viewTestedPageSelector =
       'div[role="button"] ::-p-text("View tested page")';
     const screenshotTabSelector = 'div.ThdJC.kaAt2.xagcJf.dyhUwd[role="tab"]';
@@ -238,6 +269,20 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
     const screenshotImgSelector = 'img[alt="Screenshot"]';
     const consoleLogSelector = "div.myH6rc";
 
+    // Define file paths (absolute for writing, relative for setting outputs)
+    const screenshotPathAbs = path.join(outputDir, "screenshot.png");
+    const screenshotPathRel = path.join(outputDirName, "screenshot.png");
+    const logsPathAbs = path.join(outputDir, "errors.txt");
+    const logsPathRel = path.join(outputDirName, "errors.txt");
+    const fallbackScreenshotPathAbs = path.join(
+      outputDir,
+      "fallback-screenshot.png"
+    );
+    const fallbackScreenshotPathRel = path.join(
+      outputDirName,
+      "fallback-screenshot.png"
+    ); // Separate name for fallback
+
     // Helper function for clicking with error handling
     async function safeClick(
       selector,
@@ -245,13 +290,11 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
       postClickWaitTime = 1000,
       waitForSelectorTimeout = 5000
     ) {
-      console.log(
-        `[INFO] Attempting to click '${elementName}' (${selector})...`
-      );
+      core.info(`[INFO] Attempting to click '${elementName}' (${selector})...`);
       try {
         if (!selector.includes("::-p-text")) {
           // Use the specific timeout for waiting for the selector
-          console.log(
+          core.info(
             `[DEBUG] Waiting for selector '${selector}' with timeout ${waitForSelectorTimeout}ms`
           );
           await page.waitForSelector(selector, {
@@ -259,26 +302,28 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
             timeout: waitForSelectorTimeout,
           });
         } else {
-          await new Promise((resolve) => setTimeout(resolve, 500)); // Short wait for text selectors
+          // Text selectors might need a slight delay to settle
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
         await page.click(selector);
         // Use the specific post-click wait time
         await new Promise((resolve) => setTimeout(resolve, postClickWaitTime));
-        console.log(`[INFO] Successfully clicked '${elementName}'.`);
+        core.info(`[INFO] Successfully clicked '${elementName}'.`);
         return true;
       } catch (e) {
-        console.error(`[ERROR] Failed to click '${elementName}': ${e.message}`);
+        core.error(`[ERROR] Failed to click '${elementName}': ${e.message}`);
         const failureScreenshotPath = path.join(
           outputDir,
           `${elementName.toLowerCase().replace(/\s+/g, "-")}-click-failure.png`
         );
         try {
           await page.screenshot({ path: failureScreenshotPath });
-          console.log(
+          core.warning(
+            // Use warning for non-critical failure screenshot
             `[INFO] Failure screenshot saved to ${failureScreenshotPath}`
           );
         } catch (screenshotError) {
-          console.error(
+          core.error(
             `[ERROR] Failed to save failure screenshot for ${elementName}: ${screenshotError.message}`
           );
         }
@@ -287,70 +332,84 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
     }
 
     // Click View Tested Page
-    if (await safeClick(viewTestedPageSelector, "View Tested Page", 2000)) {
+    if (
+      await safeClick(viewTestedPageSelector, "View Tested Page", 2000, 10000)
+    ) {
+      // Increase wait for this button
       // Only proceed if View Tested Page was clicked
 
       // Click Screenshot Tab and Save Screenshot
       if (await safeClick(screenshotTabSelector, "Screenshot Tab")) {
-        console.log("[INFO] Saving screenshot from Screenshot tab...");
+        core.info("[INFO] Saving screenshot from Screenshot tab...");
         try {
+          // Wait for the image element itself to be present
+          await page.waitForSelector(screenshotImgSelector, {
+            visible: true,
+            timeout: 10000,
+          });
           const screenshotElement = await page.$(screenshotImgSelector);
-          const screenshotPath = path.join(outputDir, "screenshot.png");
           if (screenshotElement) {
-            await screenshotElement.screenshot({ path: screenshotPath });
-            console.log(
-              `[INFO] Screenshot saved successfully to ${screenshotPath}`
+            await screenshotElement.screenshot({ path: screenshotPathAbs });
+            core.info(
+              `[INFO] Screenshot saved successfully to ${screenshotPathAbs}`
             );
+            core.setOutput("screenshot-path", screenshotPathRel); // Set output on success
           } else {
-            console.log(
-              `[WARN] Screenshot element ('${screenshotImgSelector}') not found. Saving fallback screenshot of tab.`
+            core.warning(
+              // Use warning
+              `[WARN] Screenshot element ('${screenshotImgSelector}') not found after clicking tab. Saving fallback screenshot of tab.`
             );
-            await page.screenshot({ path: screenshotPath }); // Save fallback with the main name
-            console.log(
-              `[INFO] Fallback screenshot saved successfully to ${screenshotPath}`
+            await page.screenshot({ path: screenshotPathAbs }); // Save fallback with the main name
+            core.info(
+              `[INFO] Fallback screenshot saved successfully to ${screenshotPathAbs}`
             );
+            core.setOutput("screenshot-path", screenshotPathRel); // Set output for fallback too
           }
         } catch (e) {
-          console.error(
-            `[ERROR] Failed to save screenshot image: ${e.message}`
-          );
+          core.error(`[ERROR] Failed to save screenshot image: ${e.message}`);
+          // Try a final fallback screenshot
           try {
-            await page.screenshot({
-              path: path.join(outputDir, "screenshot-save-failure.png"),
-            });
+            const errorScreenshotPath = path.join(
+              outputDir,
+              "screenshot-save-failure.png"
+            );
+            await page.screenshot({ path: errorScreenshotPath });
+            core.warning(
+              `Saved error state screenshot to ${errorScreenshotPath}`
+            );
           } catch (se) {
-            console.error(
-              "Failed to save even fallback screenshot error screenshot."
+            core.error(
+              "[ERROR] Failed to save even the error state screenshot."
             );
           }
         }
       } else {
-        console.log("[WARN] Screenshot Tab click failed, screenshot skipped.");
+        core.warning("[WARN] Screenshot Tab click failed, screenshot skipped."); // Use warning
       }
 
       // Click More Info Tab and gather logs
       let errorLogResult = "Skipped (More Info tab click failed)"; // Default
       if (await safeClick(moreInfoTabSelector, "More Info Tab")) {
-        // Click JavaScript Console Errors Button (using the updated text selector)
+        // Click JavaScript Console Errors Button
         if (
           await safeClick(
             consoleErrorsSelector,
-            "JavaScript Console Messages Button"
+            "JavaScript Console Messages Button",
+            1000, // Shorter wait after click
+            15000 // Increase wait for button itself
           )
         ) {
-          console.log("[INFO] Saving console logs...");
+          core.info("[INFO] Saving console logs...");
           try {
             // Wait for the console log container to appear after clicking the button
-            console.log(
+            core.info(
               `[DEBUG] Waiting for console log container: ${consoleLogSelector}`
             );
-            // Wait for element to be present in DOM, not necessarily visible
+            // Wait longer for the log container to potentially populate
             await page.waitForSelector(consoleLogSelector, {
-              timeout: 30000, // Keep 30s timeout for presence
+              timeout: 30000,
             });
-            console.log(
-              "[DEBUG] Console log container found in DOM (may not be visible yet)."
-            );
+            core.info("[DEBUG] Console log container found in DOM.");
 
             // If selector found, extract content
             errorLogResult = await page.evaluate((selector) => {
@@ -358,78 +417,89 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
               return errorContainer
                 ? errorContainer.textContent ||
                     "Console log container found but empty."
-                : `Container ('${selector}') found but querySelector failed inside evaluate?`; // Should not happen if waitForSelector passed
+                : "Console log container selector found but querySelector failed inside evaluate.";
             }, consoleLogSelector);
-            console.log("[INFO] Console logs obtained successfully");
+            core.info("[INFO] Console logs obtained successfully");
           } catch (e) {
-            // Check if the error is specifically a TimeoutError from waitForSelector
             if (e.name === "TimeoutError") {
-              console.log(
-                `[INFO] Console log container ('${consoleLogSelector}') not found in DOM within timeout. Assuming no messages.` // Updated log message
+              core.info(
+                // Use info, as no logs is not necessarily an error
+                `[INFO] Console log container ('${consoleLogSelector}') not found in DOM within timeout. Assuming no messages.`
               );
               errorLogResult =
                 "No console log container found (likely no messages).";
             } else {
-              // Log other errors (e.g., evaluate errors) more seriously
-              console.error(
+              core.error(
+                // Log other errors more seriously
                 `[ERROR] Failed to extract console logs: ${e.message}`
               );
               errorLogResult = `Failed to extract console logs: ${e.message}`;
             }
           }
         } else {
+          core.warning(
+            "[WARN] JavaScript Console Messages button click failed, logs skipped."
+          ); // Use warning
           errorLogResult = "Skipped (Console Messages button click failed)";
         }
+      } else {
+        core.warning("[WARN] More Info Tab click failed, logs skipped."); // Use warning
       }
       // Save logs result regardless of inner clicks failing
       try {
-        fs.writeFileSync(path.join(outputDir, "errors.txt"), errorLogResult);
-        console.log(`[INFO] Console logs result saved.`);
+        fs.writeFileSync(logsPathAbs, errorLogResult);
+        core.info(`[INFO] Console logs result saved to ${logsPathAbs}`);
+        core.setOutput("logs-path", logsPathRel); // Set output
       } catch (e) {
-        console.error(
+        core.error(
           `[ERROR] Failed to write console logs result file: ${e.message}`
         );
       }
     } else {
-      console.log(
+      core.warning(
+        // Use warning
         "[WARN] View Tested Page click failed, skipping dependent screenshot and logs."
       );
+      // Attempt to save a fallback screenshot and logs even if "View Tested Page" fails
       try {
         fs.writeFileSync(
-          path.join(outputDir, "errors.txt"),
+          logsPathAbs,
           "Skipped (View Tested Page click failed)"
         );
+        core.setOutput("logs-path", logsPathRel); // Set output even for skipped
       } catch (e) {
-        console.error("Failed to write skipped error log:", e);
+        core.error("[ERROR] Failed to write skipped error log:", e);
       }
       try {
-        const fallbackScreenshotPath = path.join(outputDir, "screenshot.png");
-        console.log(
-          `[INFO] Taking fallback screenshot to ${fallbackScreenshotPath} because View Tested Page failed...`
+        core.info(
+          `[INFO] Taking fallback screenshot to ${fallbackScreenshotPathAbs} because View Tested Page failed...`
         );
-        await page.screenshot({ path: fallbackScreenshotPath });
-        console.log(`[INFO] Fallback screenshot saved.`);
+        await page.screenshot({ path: fallbackScreenshotPathAbs });
+        core.info(`[INFO] Fallback screenshot saved.`);
+        core.setOutput("screenshot-path", fallbackScreenshotPathRel); // Set output for fallback
       } catch (e) {
-        console.error(
-          `[ERROR] Failed to take fallback screenshot: ${e.message}`
-        );
+        core.error(`[ERROR] Failed to take fallback screenshot: ${e.message}`);
       }
     }
-
-    // --- Browser Closing and Exit Code ---
-    console.log("[INFO] Closing browser...");
-    if (
-      typeof browser !== "undefined" &&
-      browser &&
-      typeof browser.close === "function"
-    ) {
+  } catch (e) {
+    // Catch any top-level errors not handled elsewhere
+    core.setFailed(`[ERROR] Main execution failed: ${e.message}`);
+    // Ensure stack trace is logged if available
+    if (e.stack) {
+      core.error(e.stack);
+    }
+  } finally {
+    // --- Browser Closing ---
+    if (browser) {
+      core.info("[INFO] Closing browser...");
       try {
         await browser.close();
-      } catch (e) {}
+        core.info("[INFO] Browser closed successfully.");
+      } catch (closeError) {
+        core.warning(`[WARN] Error closing browser: ${closeError.message}`); // Warn instead of fail on close error
+      }
+    } else {
+      core.info("[INFO] No browser instance to close.");
     }
-    process.exit(0);
-  } catch (e) {
-    console.error(`[ERROR] Test execution failed: ${e.message}`);
-    process.exit(1);
   }
-})();
+})(); // End async function execution
