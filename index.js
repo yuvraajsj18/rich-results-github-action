@@ -18,12 +18,6 @@ const outputDir = path.resolve(outputDirName);
 core.info(`[INFO] Starting test for URL: ${urlToTest}`);
 core.info(`[INFO] Output directory: ${outputDir}`);
 
-// Construct the direct test URL
-const directTestUrl = `https://search.google.com/test/rich-results?url=${encodeURIComponent(
-  urlToTest
-)}`;
-core.info(`[INFO] Constructed direct test URL: ${directTestUrl}`);
-
 (async () => {
   let browser = null; // Define browser outside try block for finally
   try {
@@ -37,14 +31,14 @@ core.info(`[INFO] Constructed direct test URL: ${directTestUrl}`);
     const page = await browser.newPage();
     core.info("[INFO] Browser launched successfully");
 
-    // Navigate DIRECTLY to the Rich Results Test page with the URL parameter
-    core.info("[INFO] Navigating directly to test results URL...");
-    await page.goto(directTestUrl, {
-      // Use the constructed direct URL
+    // Navigate to the BASE Rich Results Test page
+    core.info("[INFO] Navigating to base Rich Results Test page...");
+    await page.goto("https://search.google.com/test/rich-results", {
+      // <-- Use base URL
       waitUntil: "networkidle0",
       timeout: 60000, // Keep generous timeout for initial load
     });
-    core.info("[INFO] Direct test page loaded.");
+    core.info("[INFO] Base test page loaded.");
 
     // --- Attempt to detect and dismiss intermittent modal --- New Block ---
     core.info(
@@ -95,8 +89,68 @@ core.info(`[INFO] Constructed direct test URL: ${directTestUrl}`);
     }
     // --- End of modal handling block ---
 
+    // --- Re-introduce URL Input Step ---
+    core.info("[INFO] Attempting to input URL...");
+    // Wait for the input field to be ready before typing
+    await page.waitForSelector('input[aria-label="Enter a URL to test"]', {
+      visible: true,
+      timeout: 10000,
+    });
+    await page.type('input[aria-label="Enter a URL to test"]', urlToTest);
+    core.info("[INFO] URL input successful");
+    // --- End of URL Input Step ---
+
+    // --- Re-introduce Button Click Step ---
+    core.info("[INFO] Starting test process by clicking button...");
+    const testButtonSelector = "span.RveJvd.snByac"; // Target the parent span containing the button
+
+    try {
+      // Wait for the button to be clickable
+      await page.waitForSelector(testButtonSelector, {
+        visible: true,
+        timeout: 10000,
+      });
+      // Add a small delay before clicking
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      core.info(`[DEBUG] Attempting to click selector: ${testButtonSelector}`);
+      await page.click(testButtonSelector);
+      core.info(
+        "[INFO] Test button clicked via specific selector, waiting for response..."
+      );
+    } catch (clickError) {
+      core.error(
+        `[ERROR] Could not click button with selector: ${testButtonSelector} - ${clickError}`
+      );
+      core.error(
+        "[ERROR] The identified specific selector failed. Please double-check the element on the page."
+      );
+      // Try to take screenshot before failing
+      try {
+        // Ensure output dir exists for failure screenshot
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        const failureScreenshotPath = path.join(
+          outputDir,
+          "click-failure-state.png"
+        );
+        await page.screenshot({ path: failureScreenshotPath });
+        core.warning(
+          `Failure state screenshot saved to ${failureScreenshotPath}`
+        );
+      } catch (ssError) {
+        core.error(`Failed to save failure state screenshot: ${ssError}`);
+      }
+      // Set failure and exit function
+      core.setFailed(
+        `Failed to click the specific Test URL button element (${testButtonSelector}).`
+      );
+      return; // Exit the async function
+    }
+    // --- End of Button Click Step ---
+
     // Wait for the FINAL test results page state (shows View Tested Page or an error)
-    // This wait is still needed as the test runs automatically upon loading the direct URL
+    // This wait is still needed after clicking the button
     core.info(
       "[INFO] Waiting for final test results page state (this may take a minute or two)..."
     );
