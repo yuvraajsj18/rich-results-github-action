@@ -13,131 +13,46 @@ const outputDir = path.resolve(outputDirName);
 core.info(`[INFO] Starting test for URL: ${urlToTest}`);
 core.info(`[INFO] Output directory: ${outputDir}`);
 
+// Construct the direct test URL
+const directTestUrl = `https://search.google.com/test/rich-results?url=${encodeURIComponent(
+  urlToTest
+)}`;
+core.info(`[INFO] Constructed direct test URL: ${directTestUrl}`);
+
 (async () => {
   let browser = null; // Define browser outside try block for finally
   try {
     core.info("[INFO] Launching browser...");
     // Launch headless with args for CI environment
     browser = await puppeteer.launch({
-      headless: "new", // <--- Change this back for the Action
-      // headless: false, // Comment out or remove the debug line
+      headless: "new", // Keep headless for the Action
       args: ["--no-sandbox", "--disable-setuid-sandbox"], // Necessary for Actions runner
       defaultViewport: { width: 1366, height: 768 },
     });
     const page = await browser.newPage();
     core.info("[INFO] Browser launched successfully");
 
-    // Navigate to the Rich Results Test page
-    core.info("[INFO] Navigating to Rich Results Test page...");
-    await page.goto("https://search.google.com/test/rich-results", {
+    // Navigate DIRECTLY to the Rich Results Test page with the URL parameter
+    core.info("[INFO] Navigating directly to test results URL...");
+    await page.goto(directTestUrl, {
+      // Use the constructed direct URL
       waitUntil: "networkidle0",
-      timeout: 60000, // Increased timeout slightly for CI potentially slower network
+      timeout: 60000, // Keep generous timeout for initial load
     });
-    core.info("[INFO] Page loaded successfully.");
-
-    // --- Add the refresh step ---
-    core.info("[INFO] Refreshing the page once...");
-    await page.reload({ waitUntil: "networkidle0", timeout: 60000 }); // Wait for network idle after reload
-    core.info("[INFO] Page refreshed successfully.");
-    // --- End of refresh step ---
-
-    // Input the URL using the correct selector
-    core.info("[INFO] Attempting to input URL...");
-    // Wait for the input field to be ready before typing
-    await page.waitForSelector('input[aria-label="Enter a URL to test"]', {
-      visible: true,
-      timeout: 10000,
-    });
-    await page.type('input[aria-label="Enter a URL to test"]', urlToTest);
-    core.info("[INFO] URL input successful");
-
-    core.info("[INFO] Starting test process...");
-
-    // Click the test button using the specific selector identified
-    core.info("[INFO] Looking for specific 'Test URL' button container...");
-    const testButtonSelector = "span.RveJvd.snByac"; // Target the parent span
-
-    try {
-      // Wait for the button to be clickable
-      await page.waitForSelector(testButtonSelector, {
-        visible: true,
-        timeout: 10000,
-      });
-      // Add a small delay before clicking
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      core.info(`[DEBUG] Attempting to click selector: ${testButtonSelector}`);
-      await page.click(testButtonSelector);
-      core.info(
-        "[INFO] Test button clicked via specific selector, waiting for response..."
-      );
-    } catch (clickError) {
-      core.error(
-        `[ERROR] Could not click button with selector: ${testButtonSelector} - ${clickError}`
-      );
-      core.error(
-        "[ERROR] The identified specific selector failed. Please double-check the element on the page."
-      );
-      // Try to take screenshot before failing
-      try {
-        // Ensure output dir exists for failure screenshot
-        if (!fs.existsSync(outputDir)) {
-          fs.mkdirSync(outputDir, { recursive: true });
-        }
-        const failureScreenshotPath = path.join(
-          outputDir,
-          "click-failure-state.png"
-        );
-        await page.screenshot({ path: failureScreenshotPath });
-        core.warning(
-          `Failure state screenshot saved to ${failureScreenshotPath}`
-        );
-      } catch (ssError) {
-        core.error(`Failed to save failure state screenshot: ${ssError}`);
-      }
-      // Set failure and exit function
-      core.setFailed(
-        `Failed to click the specific Test URL button element (${testButtonSelector}).`
-      );
-      return; // Exit the async function
-    }
-
-    // Wait for the test to start - look for loading indicators or changes in the page
-    core.info("[INFO] Waiting for test to start...");
-    await page
-      .waitForFunction(
-        () => {
-          // Check for loading indicators or changes in the page
-          const loadingIndicators = document.querySelectorAll(
-            '.loading, .spinner, [role="progressbar"]'
-          );
-          const pageText = document.body.innerText;
-
-          // If we see loading indicators or the page text has changed from the initial state
-          return (
-            loadingIndicators.length > 0 ||
-            !pageText.includes("Does your page support rich results?") ||
-            pageText.includes("Testing") ||
-            pageText.includes("Analyzing")
-          );
-        },
-        { timeout: 15000, polling: 500 } // Increased slightly
-      )
-      .catch(() => {
-        core.warning(
-          "[WARN] No clear loading indicator found after click, continuing anyway..."
-        );
-      });
-
-    // Wait for the test results page to load (shows View Tested Page or an error)
     core.info(
-      "[INFO] Waiting for test results page to load (this may take a minute or two)..."
+      "[INFO] Direct test page loaded. Waiting for analysis to start/complete..."
     );
-    // Define file paths relative to the specified output directory
+
+    // Wait for the FINAL test results page state (shows View Tested Page or an error)
+    // This wait is still needed as the test runs automatically upon loading the direct URL
+    core.info(
+      "[INFO] Waiting for final test results page state (this may take a minute or two)..."
+    );
     const timeoutScreenshotPathAbs = path.join(outputDir, "timeout-state.png");
     const timeoutScreenshotPathRel = path.join(
       outputDirName,
       "timeout-state.png"
-    ); // Relative path for output
+    );
 
     try {
       await page.waitForFunction(
@@ -152,7 +67,7 @@ core.info(`[INFO] Output directory: ${outputDir}`);
             "Application error: a client-side exception has occurred"
           );
           const hasFailedToTest = text.includes("Failed to test");
-          const hasGenericError = text.includes("Error");
+          const hasGenericError = text.includes("Error"); // Keep this check
 
           return (
             hasViewTestedPage ||
@@ -162,12 +77,14 @@ core.info(`[INFO] Output directory: ${outputDir}`);
             hasGenericError
           );
         },
-        { timeout: 300000, polling: 2000 } // 5 minutes timeout (keep it for now)
+        { timeout: 300000, polling: 2000 } // 5 minutes timeout
       );
-      core.info("[INFO] Test results page loaded (or final error displayed).");
+      core.info(
+        "[INFO] Final test results page state reached (or error displayed)."
+      );
     } catch (timeoutError) {
       core.error(
-        "[FATAL ERROR] Timeout: Test did not complete loading results within 5 minutes."
+        "[FATAL ERROR] Timeout: Did not reach final results state within 5 minutes." // Updated error message
       );
       try {
         // Ensure output dir exists for timeout screenshot
@@ -184,7 +101,7 @@ core.info(`[INFO] Output directory: ${outputDir}`);
       }
       // Set failure and exit function
       core.setFailed(
-        "Timeout: Test did not complete loading results within 5 minutes."
+        "Timeout: Did not reach final results state within 5 minutes." // Updated error message
       );
       return; // Exit the async function
     }
