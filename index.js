@@ -19,7 +19,8 @@ core.info(`[INFO] Output directory: ${outputDir}`);
     core.info("[INFO] Launching browser...");
     // Launch headless with args for CI environment
     browser = await puppeteer.launch({
-      headless: "new", // Use modern headless mode
+      headless: "new", // <--- Change this back for the Action
+      // headless: false, // Comment out or remove the debug line
       args: ["--no-sandbox", "--disable-setuid-sandbox"], // Necessary for Actions runner
       defaultViewport: { width: 1366, height: 768 },
     });
@@ -144,18 +145,20 @@ core.info(`[INFO] Output directory: ${outputDir}`);
           const hasKnownError = text.includes(
             "Application error: a client-side exception has occurred"
           );
-          const hasFailedToTest = text.includes("Failed to test"); // Added this check
+          const hasFailedToTest = text.includes("Failed to test");
+          const hasGenericError = text.includes("Error");
 
           return (
             hasViewTestedPage ||
             hasUrlNotAvailable ||
             hasKnownError ||
-            hasFailedToTest
+            hasFailedToTest ||
+            hasGenericError
           );
         },
-        { timeout: 300000, polling: 2000 } // Increased timeout to 5 minutes
+        { timeout: 300000, polling: 2000 } // 5 minutes timeout (keep it for now)
       );
-      core.info("[INFO] Test results page loaded (or error displayed).");
+      core.info("[INFO] Test results page loaded (or final error displayed).");
     } catch (timeoutError) {
       core.error(
         "[FATAL ERROR] Timeout: Test did not complete loading results within 5 minutes."
