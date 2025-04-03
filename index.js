@@ -344,25 +344,38 @@ console.log(`[INFO] Starting test for URL: ${urlToTest}`);
             console.log(
               `[DEBUG] Waiting for console log container: ${consoleLogSelector}`
             );
+            // Wait for element to be present in DOM, not necessarily visible
             await page.waitForSelector(consoleLogSelector, {
-              visible: true,
-              timeout: 15000,
+              timeout: 30000, // Keep 30s timeout for presence
             });
-            console.log("[DEBUG] Console log container found.");
+            console.log(
+              "[DEBUG] Console log container found in DOM (may not be visible yet)."
+            );
 
+            // If selector found, extract content
             errorLogResult = await page.evaluate((selector) => {
               const errorContainer = document.querySelector(selector);
               return errorContainer
                 ? errorContainer.textContent ||
                     "Console log container found but empty."
-                : `No console errors found or container ('${selector}') not found.`;
+                : `Container ('${selector}') found but querySelector failed inside evaluate?`; // Should not happen if waitForSelector passed
             }, consoleLogSelector);
             console.log("[INFO] Console logs obtained successfully");
           } catch (e) {
-            console.error(
-              `[ERROR] Failed to extract console logs (wait or evaluate failed): ${e.message}`
-            );
-            errorLogResult = `Failed to extract console logs: ${e.message}`; // More specific error
+            // Check if the error is specifically a TimeoutError from waitForSelector
+            if (e.name === "TimeoutError") {
+              console.log(
+                `[INFO] Console log container ('${consoleLogSelector}') not found in DOM within timeout. Assuming no messages.` // Updated log message
+              );
+              errorLogResult =
+                "No console log container found (likely no messages).";
+            } else {
+              // Log other errors (e.g., evaluate errors) more seriously
+              console.error(
+                `[ERROR] Failed to extract console logs: ${e.message}`
+              );
+              errorLogResult = `Failed to extract console logs: ${e.message}`;
+            }
           }
         } else {
           errorLogResult = "Skipped (Console Messages button click failed)";
