@@ -29,7 +29,7 @@ jobs:
         uses: ./
         with:
           # Use a simple, publicly accessible URL for testing
-          url: "https://www.google.com"
+          url: "https://signoz.io"
           # Use the default output directory for this test
           # output-directory: 'test-output' # Or specify a different one
 

@@ -135,24 +135,30 @@ core.info(`[INFO] Output directory: ${outputDir}`);
     try {
       await page.waitForFunction(
         () => {
-          const text = document.body.innerText;
-          // Wait for common indicators that the results page has loaded
+          const text = document.body.innerText || ""; // Ensure text is a string
+          // Wait for common indicators that the results page has loaded or failed clearly
+          const hasViewTestedPage = text.includes("View tested page");
+          const hasUrlNotAvailable = text.includes(
+            "URL is not available to Google"
+          );
+          const hasKnownError = text.includes(
+            "Application error: a client-side exception has occurred"
+          );
+          const hasFailedToTest = text.includes("Failed to test"); // Added this check
+
           return (
-            text.includes("View tested page") ||
-            text.includes("URL is not available to Google") ||
-            text.includes("Error") || // Generic error text
-            text.includes("Failed to test") || // Another failure text
-            text.includes(
-              "Application error: a client-side exception has occurred"
-            ) // Check for the target error text directly too
+            hasViewTestedPage ||
+            hasUrlNotAvailable ||
+            hasKnownError ||
+            hasFailedToTest
           );
         },
-        { timeout: 180000, polling: 2000 } // 3 minutes timeout
+        { timeout: 300000, polling: 2000 } // Increased timeout to 5 minutes
       );
       core.info("[INFO] Test results page loaded (or error displayed).");
     } catch (timeoutError) {
       core.error(
-        "[FATAL ERROR] Timeout: Test did not complete loading results within 3 minutes."
+        "[FATAL ERROR] Timeout: Test did not complete loading results within 5 minutes."
       );
       try {
         // Ensure output dir exists for timeout screenshot
@@ -169,7 +175,7 @@ core.info(`[INFO] Output directory: ${outputDir}`);
       }
       // Set failure and exit function
       core.setFailed(
-        "Timeout: Test did not complete loading results within 3 minutes."
+        "Timeout: Test did not complete loading results within 5 minutes."
       );
       return; // Exit the async function
     }
