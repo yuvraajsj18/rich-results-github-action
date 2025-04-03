@@ -31,6 +31,12 @@ core.info(`[INFO] Output directory: ${outputDir}`);
     const page = await browser.newPage();
     core.info("[INFO] Browser launched successfully");
 
+    // --- Add Random Delay ---
+    // await page.waitForTimeout(Math.random() * 1000 + 500); // Wait 0.5-1.5 seconds
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.random() * 1000 + 500)
+    ); // Use Promise/setTimeout
+
     // Navigate to the BASE Rich Results Test page
     core.info("[INFO] Navigating to base Rich Results Test page...");
     await page.goto("https://search.google.com/test/rich-results", {
@@ -39,6 +45,43 @@ core.info(`[INFO] Output directory: ${outputDir}`);
       timeout: 60000, // Keep generous timeout for initial load
     });
     core.info("[INFO] Base test page loaded.");
+
+    // --- Add Random Scroll & Mouse Movement ---
+    try {
+      core.info("[INFO] Adding random scroll/mouse movements...");
+      // await page.waitForTimeout(Math.random() * 500 + 200); // Short pause
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 500 + 200)
+      ); // Use Promise/setTimeout
+      // Random small scroll
+      await page.evaluate(() => {
+        window.scrollBy(0, Math.random() * 100 + 50); // Scroll down 50-150 pixels
+      });
+      // await page.waitForTimeout(Math.random() * 300 + 100); // Short pause
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 300 + 100)
+      ); // Use Promise/setTimeout
+      // Random mouse wiggle
+      const vp = page.viewport();
+      if (vp) {
+        // Ensure viewport is not null
+        await page.mouse.move(
+          Math.random() * vp.width * 0.6 + vp.width * 0.2, // Move somewhere random in middle 60% horizontally
+          Math.random() * vp.height * 0.6 + vp.height * 0.2, // Move somewhere random in middle 60% vertically
+          { steps: Math.floor(Math.random() * 5 + 5) } // 5-9 steps for wiggle
+        );
+      }
+      // await page.waitForTimeout(Math.random() * 500 + 300); // Pause after movement
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 500 + 300)
+      ); // Use Promise/setTimeout
+      core.info("[INFO] Added random interactions.");
+    } catch (interactionError) {
+      core.warning(
+        `[WARN] Could not perform random interactions: ${interactionError.message}`
+      );
+    }
+    // --- End Random Interactions ---
 
     // --- Attempt to detect and dismiss intermittent modal --- New Block ---
     core.info(
@@ -96,7 +139,40 @@ core.info(`[INFO] Output directory: ${outputDir}`);
       visible: true,
       timeout: 10000,
     });
-    await page.type('input[aria-label="Enter a URL to test"]', urlToTest);
+
+    // --- Add slight delay and mouse move before typing ---
+    // await page.waitForTimeout(Math.random() * 400 + 200); // 0.2-0.6 sec delay
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.random() * 400 + 200)
+    ); // Use Promise/setTimeout
+    try {
+      const inputElement = await page.$(
+        'input[aria-label="Enter a URL to test"]'
+      );
+      if (inputElement) {
+        const box = await inputElement.boundingBox();
+        if (box) {
+          await page.mouse.move(
+            box.x + box.width * Math.random() * 0.4 + box.width * 0.3, // Move near center of input
+            box.y + box.height / 2,
+            { steps: Math.floor(Math.random() * 3 + 3) } // 3-5 steps
+          );
+        }
+      }
+    } catch (moveError) {
+      core.warning(
+        `[WARN] Could not move mouse to input: ${moveError.message}`
+      );
+    }
+    // await page.waitForTimeout(Math.random() * 300 + 150); // 0.15-0.45 sec delay before typing
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.random() * 300 + 150)
+    ); // Use Promise/setTimeout
+    // --- End pre-typing interactions ---
+
+    await page.type('input[aria-label="Enter a URL to test"]', urlToTest, {
+      delay: Math.random() * 50 + 25,
+    }); // Add small random typing delay (25-75ms)
     core.info("[INFO] URL input successful");
     // --- End of URL Input Step ---
 
@@ -111,7 +187,35 @@ core.info(`[INFO] Output directory: ${outputDir}`);
         timeout: 10000,
       });
       // Add a small delay before clicking
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // await page.waitForTimeout(Math.random() * 700 + 300); // Wait 0.3-1.0 seconds before clicking
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 700 + 300)
+      ); // Use Promise/setTimeout
+
+      // --- Add mouse move before clicking button ---
+      try {
+        const buttonElement = await page.$(testButtonSelector);
+        if (buttonElement) {
+          const box = await buttonElement.boundingBox();
+          if (box) {
+            await page.mouse.move(
+              box.x + box.width / 2,
+              box.y + box.height / 2,
+              { steps: Math.floor(Math.random() * 4 + 4) } // 4-7 steps
+            );
+          }
+        }
+      } catch (moveError) {
+        core.warning(
+          `[WARN] Could not move mouse to button: ${moveError.message}`
+        );
+      }
+      // await page.waitForTimeout(Math.random() * 300 + 100); // 0.1-0.4 sec delay before click
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * 300 + 100)
+      ); // Use Promise/setTimeout
+      // --- End pre-click interactions ---
+
       core.info(`[DEBUG] Attempting to click selector: ${testButtonSelector}`);
       await page.click(testButtonSelector);
       core.info(
@@ -163,17 +267,19 @@ core.info(`[INFO] Output directory: ${outputDir}`);
     try {
       await page.waitForFunction(
         () => {
-          const text = document.body.innerText || ""; // Ensure text is a string
+          const text = (document.body.innerText || "").toLowerCase(); // Ensure text is a string AND convert to lowercase
           // Wait for common indicators that the results page has loaded or failed clearly
-          const hasViewTestedPage = text.includes("View tested page");
+          // Check for lowercase version now
+          const hasViewTestedPage = text.includes("view tested page");
+          // Keep other checks as they are, assuming their casing is reliable or less critical
           const hasUrlNotAvailable = text.includes(
-            "URL is not available to Google"
+            "url is not available to google"
           );
           const hasKnownError = text.includes(
-            "Application error: a client-side exception has occurred"
+            "application error: a client-side exception has occurred"
           );
-          const hasFailedToTest = text.includes("Failed to test");
-          const hasGenericError = text.includes("Error"); // Keep this check
+          const hasFailedToTest = text.includes("failed to test");
+          const hasGenericError = text.includes("error");
 
           return (
             hasViewTestedPage ||
