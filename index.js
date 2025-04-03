@@ -25,7 +25,7 @@ core.info(`[INFO] Constructed direct test URL: ${directTestUrl}`);
     core.info("[INFO] Launching browser...");
     // Launch headless with args for CI environment
     browser = await puppeteer.launch({
-      headless: "new", // Keep headless for the Action
+      headless: false, // Keep headless for the Action
       args: ["--no-sandbox", "--disable-setuid-sandbox"], // Necessary for Actions runner
       defaultViewport: { width: 1366, height: 768 },
     });
